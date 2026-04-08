@@ -1,0 +1,68 @@
+- name: Configure Web Servers with Database Connection
+  hosts: web_servers
+  become: yes
+
+  tasks:
+    - name: Create application directory
+      file:
+        path: /var/www/html/app
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+
+    - name: Copy database configuration file
+      template:
+        src: db_config.j2
+        dest: /var/www/html/app/db_config.php
+        owner: www-data
+        group: www-data
+        mode: '0640'
+
+    - name: Create application PHP file
+      copy:
+        content: |
+          <?php
+          require 'db_config.php';
+          
+          try {
+              $pdo = new PDO($dsn, $user, $pass);
+              echo "Application connected to database successfully!";
+              
+              $result = $pdo->query("SELECT VERSION() as version, DATABASE() as db");
+              $row = $result->fetch(PDO::FETCH_ASSOC);
+              
+              echo "<br>MySQL Version: " . $row['version'];
+              echo "<br>Database: " . $row['db'];
+          } catch (PDOException $e) {
+              echo "Database error: " . $e->getMessage();
+          }
+          ?>
+        dest: /var/www/html/app/index.php
+        owner: www-data
+        group: www-data
+        mode: '0644'
+
+    - name: Test database connection
+      shell: |
+        php -r "
+        require '/var/www/html/app/db_config.php';
+        try {
+          \$pdo = new PDO(\$dsn, \$user, \$pass);
+          echo 'Connection successful';
+        } catch (PDOException \$e) {
+          echo 'Connection failed: ' . \$e->getMessage();
+          exit(1);
+        }
+        "
+      register: db_test_result
+      ignore_errors: yes
+
+    - name: Display database test result
+      debug:
+        msg: "Database connection test: {{ db_test_result.stdout }}"
+
+    - name: Display completion message
+      debug:
+        msg: "✓ Web server configured successfully on {{ inventory_hostname }}"
+

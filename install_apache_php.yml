@@ -1,0 +1,62 @@
+- name: Install and Configure Apache and PHP
+  hosts: web_servers
+  become: yes
+
+  tasks:
+    - name: Update system packages
+      apt:
+        update_cache: yes
+        upgrade: dist
+
+    - name: Install Apache and PHP packages
+      apt:
+        name:
+          - apache2
+          - php
+          - php-mysql
+          - php-curl
+          - php-json
+          - php-xml
+        state: present
+
+    - name: Enable Apache modules
+      apache2_module:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - rewrite
+        - ssl
+        - headers
+
+    - name: Create Apache document root
+      file:
+        path: /var/www/html
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+
+    - name: Copy PHP test file
+      template:
+        src: php_test.j2
+        dest: /var/www/html/index.php
+        owner: www-data
+        group: www-data
+        mode: '0644'
+
+    - name: Start Apache service
+      systemd:
+        name: apache2
+        state: started
+        enabled: yes
+
+    - name: Verify Apache is running
+      uri:
+        url: http://localhost
+        status_code: 200
+      retries: 3
+      delay: 5
+
+    - name: Display completion message
+      debug:
+        msg: "✓ Apache and PHP installed successfully on {{ inventory_hostname }}"
