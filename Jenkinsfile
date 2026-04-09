@@ -13,26 +13,25 @@ pipeline {
     }
     
     stages {
-        // SCM checkout happens automatically
-        // But we'll handle cloning ourselves for better control
-        
         stage('Clone Repository') {
             steps {
                 script {
                     echo "📥 Cloning from GitHub..."
                     
-                    // Clean workspace first
+                    // Clean workspace
                     deleteDir()
                     
-                    // Use SSH key to clone (more reliable than token in dropdown)
-                    withCredentials([sshUserPrivateKey(credentialsId: 'aws-ec2-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                    // Use GitHub token to clone
+                    withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
                         sh '''
-                        GIT_SSH_COMMAND="ssh -i $SSH_KEY_FILE -o StrictHostKeyChecking=no" \
-                        git clone git@github.com:PUND-RUSHABH-MOHAN/jenkins-repo.git .
+                        echo "Using GitHub token for authentication..."
+                        
+                        git clone \
+                          https://${GITHUB_TOKEN}@github.com/PUND-RUSHABH-MOHAN/jenkins-repo.git .
                         
                         git checkout main
                         
-                        echo "✓ Repository cloned"
+                        echo "✓ Repository cloned successfully"
                         '''
                     }
                 }
@@ -45,26 +44,18 @@ pipeline {
                     echo "📋 Verifying files..."
                     
                     sh '''
-                    ls -la jenkins-ansible/ || echo "jenkins-ansible not found"
-                    ls -la terraform/ || echo "terraform not found"
-                    '''
-                }
-            }
-        }
-        
-        stage('Verify Configuration') {
-            steps {
-                script {
-                    echo "Checking inventory..."
+                    if [ ! -d "jenkins-ansible" ]; then
+                        echo "❌ jenkins-ansible directory not found"
+                        exit 1
+                    fi
                     
-                    sh '''
                     if [ ! -f "jenkins-ansible/inventory/inventory.ini" ]; then
                         echo "❌ inventory.ini not found"
                         echo "Need to run: terraform apply && update_inventory.sh"
                         exit 1
                     fi
                     
-                    echo "✓ Inventory found"
+                    echo "✓ All files verified"
                     '''
                 }
             }
@@ -73,14 +64,16 @@ pipeline {
         stage('Test Connectivity') {
             steps {
                 script {
-                    echo "🔗 Testing SSH connectivity..."
+                    echo "🔗 Testing SSH to EC2s..."
                     
                     withCredentials([sshUserPrivateKey(credentialsId: 'aws-ec2-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                         sh '''
                         cd jenkins-ansible
                         export ANSIBLE_PRIVATE_KEY_FILE=$SSH_KEY_FILE
                         
+                        echo "Pinging servers..."
                         ansible all -m ping
+                        
                         echo "✓ All servers reachable"
                         '''
                     }
@@ -91,14 +84,16 @@ pipeline {
         stage('Deploy Applications') {
             steps {
                 script {
-                    echo "🚀 Deploying..."
+                    echo "🚀 Deploying with Ansible..."
                     
                     withCredentials([sshUserPrivateKey(credentialsId: 'aws-ec2-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                         sh '''
                         cd jenkins-ansible
                         export ANSIBLE_PRIVATE_KEY_FILE=$SSH_KEY_FILE
                         
+                        echo "Running Ansible playbooks..."
                         ansible-playbook playbooks/deploy_all.yml -v
+                        
                         echo "✓ Deployment complete"
                         '''
                     }
@@ -109,13 +104,22 @@ pipeline {
         stage('Verify Deployment') {
             steps {
                 script {
-                    echo "Verifying..."
+                    echo "✅ Verifying deployment..."
                     
                     sh '''
                     cd jenkins-ansible
-                    WEB=$(grep "web_server_1" inventory/inventory.ini | grep "ansible_host" | awk '{print $NF}' | cut -d'=' -f2)
                     
-                    curl -s http://$WEB | grep -q "Web Server Running" && echo "✓ Success" || exit 1
+                    WEB_SERVER=$(grep "web_server_1" inventory/inventory.ini | grep "ansible_host" | awk '{print $NF}' | cut -d'=' -f2)
+                    
+                    echo "Testing web server: http://$WEB_SERVER"
+                    sleep 2
+                    
+                    if curl -s http://$WEB_SERVER | grep -q "Web Server Running"; then
+                        echo "✓ Web server responding"
+                    else
+                        echo "✗ Verification failed"
+                        exit 1
+                    fi
                     '''
                 }
             }
@@ -123,6 +127,9 @@ pipeline {
     }
     
     post {
+        always {
+            sh 'echo "Build completed"'
+        }
         success {
             echo "✅ BUILD SUCCESS"
         }
@@ -133,4 +140,4 @@ pipeline {
 }
 
 
-echo "✓ Created new Jenkinsfile"
+echo "✓ Updated Jenkinsfile to use GitHub token"
